@@ -23,11 +23,20 @@ using Board = std::array<std::array<microBoard, 3>, 3>;
 using valueBoard = std::array<std::array<float, 3>, 3>;
 using supervalueBoard = std::array<std::array<valueBoard, 3>, 3>;
 
+
 class valueBoards {
     public:
         valueBoard X;
         valueBoard O;
 };
+
+class stateValues {
+    public:
+    float X;
+    float O;
+    float draw;
+};
+using macroBoardvalue = std::array<std::array<stateValues, 3>, 3>;
 
 const int depthlimit1 = 3; // Depth limit for the recursive evaluation
 const int depthlimit2 = 3; // Depth limit for the recursive evaluation
@@ -199,20 +208,54 @@ valueBoards board_to_valueBoard(microBoard board){
 
         }
     }
+    return boardState;
 }
 
 
-float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove, const microBoard& wonBoards){
-    valueBoards probBoard;
+stateValues getBoardProb(const Board& board,const valueBoards Board){
 
-        for(int i =0; i<3;i++){
-            for(int j =0; j<3;j++){
 
-        }
+    // Convert the microBoard of won boards into probabilistic value boards
+
+    auto prod = [&](float a, float b, float c){ return a * b * c; };
+
+    float totalX = 0.0f;
+    float totalO = 0.0f;
+
+    // Rows
+    for(int i=0;i<3;i++){
+        totalX += prod(Board.X[i][0], Board.X[i][1], Board.X[i][2]);
+        totalO += prod(Board.O[i][0], Board.O[i][1], Board.O[i][2]);
     }
 
+    // Columns
+    for(int j=0;j<3;j++){
+        totalX += prod(Board.X[0][j], Board.X[1][j], Board.X[2][j]);
+        totalO += prod(Board.O[0][j], Board.O[1][j], Board.O[2][j]);
+    }
+
+    // Diagonals
+    totalX += prod(Board.X[0][0], Board.X[1][1], Board.X[2][2]);
+    totalO += prod(Board.O[0][0], Board.O[1][1], Board.O[2][2]);
+
+    totalX += prod(Board.X[0][2], Board.X[1][1], Board.X[2][0]);
+    totalO += prod(Board.O[0][2], Board.O[1][1], Board.O[2][0]);
+
+
+    stateValues out;
+    out.X = totalX /totalO;
+    out.O = totalO / totalX;
+    out.draw = std::max(0.0f,1-out.X-out.O);
+    // Return difference (positive favors X, negative favors O)
+    return out;
 
 }
+
+float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove, const microBoard& wonBoards){
+
+
+}
+
 
 
 bool compX(float a, float b)
@@ -419,14 +462,6 @@ float rateBoardRecursive(const Board& board, Player currentPlayer, Move previous
 
     return bestScore;
 }
-
-
-
-
-
-
-
-
 
 
 
