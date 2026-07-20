@@ -1,0 +1,5 @@
+depthlimitX 5
+depthlimitO 5
+Xwins:23
+Owins:19
+Draws:8

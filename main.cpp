@@ -1,0 +1,687 @@
+
+// main.cpp
+// Noughts and Crosses squared - basic boilerplate
+
+#include <iostream>
+#include <array>
+#include <string>
+#include <vector>
+#include <ctime>
+#include <cstdlib>
+#include <limits>
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+
+
+enum class Player { None, X, O, Draw };
+
+using Move = std::array<int, 4>;
+using Moves = std::vector<Move>;
+using microBoard = std::array<std::array<Player, 3>, 3>;
+using Board = std::array<std::array<microBoard, 3>, 3>;
+using valueBoard = std::array<std::array<float, 3>, 3>;
+using supervalueBoard = std::array<std::array<valueBoard, 3>, 3>;
+
+class valueBoards {
+    public:
+        valueBoard X;
+        valueBoard O;
+};
+
+const int depthlimit1 = 3; // Depth limit for the recursive evaluation
+const int depthlimit2 = 3; // Depth limit for the recursive evaluation
+
+
+void render(const Board& board) {
+    std::cout << "\n     0 1 2   3 4 5   6 7 8\n";
+    std::cout << "    -----------------------------\n";
+    
+    for (int macroRow = 0; macroRow < 3; ++macroRow) {
+        for (int microRow = 0; microRow < 3; ++microRow) {
+            // Print visual row coordinate helper
+            std::cout << (macroRow * 3 + microRow) << " |  ";
+            
+            for (int macroCol = 0; macroCol < 3; ++macroCol) {
+                for (int microCol = 0; microCol < 3; ++microCol) {
+                    char c = '.';
+                    if (board[macroRow][macroCol][microRow][microCol] == Player::X) c = 'X';
+                    else if (board[macroRow][macroCol][microRow][microCol] == Player::O) c = 'O';
+                    std::cout << c << ' ';
+                }
+                std::cout << "  "; // Space between macro boards horizontally
+            }
+            std::cout << '\n';
+        }
+        std::cout << "    -----------------------------\n"; // Space between macro boards vertically
+    }
+    std::cout << '\n';
+}
+Moves getMoves(const Board& board, Move currentMove,const microBoard& wonBoards) {
+    Moves moves;
+
+    if (wonBoards[currentMove[2]][currentMove[3]] != Player::None) {
+        // If the current micro board is won, allow moves in any non-won micro board
+        for (int macroRow = 0; macroRow < 3; ++macroRow) {
+            for (int macroCol = 0; macroCol < 3; ++macroCol) {
+                if (wonBoards[macroRow][macroCol] == Player::None) {
+                    for (int microRow = 0; microRow < 3; ++microRow) {
+                        for (int microCol = 0; microCol < 3; ++microCol) {
+                            if (board[macroRow][macroCol][microRow][microCol] == Player::None) {
+                                moves.push_back({macroRow, macroCol, microRow, microCol});
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Otherwise, only allow moves in the current micro board
+        for (int microRow = 0; microRow < 3; ++microRow) {
+            for (int microCol = 0; microCol < 3; ++microCol) {
+                if (board[currentMove[2]][currentMove[3]][microRow][microCol] == Player::None) {
+                    moves.push_back({currentMove[2], currentMove[3], microRow, microCol});
+                }
+            }
+        }
+    }
+
+
+    return moves;
+}
+
+Move interpretMove(const std::string& input) {
+    Move move = {0, 0, 0, 0};
+    if (input.length() == 4) {
+        move[0] = input[0] - '0'; // Macro row
+        move[1] = input[1] - '0'; // Macro column
+        move[2] = input[2] - '0'; // Micro row
+        move[3] = input[3] - '0'; // Micro column
+    }
+    if (
+        move[0] < 0 || move[0] > 2 ||
+        move[1] < 0 || move[1] > 2 ||
+        move[2] < 0 || move[2] > 2 ||
+        move[3] < 0 || move[3] > 2
+    ) {
+        std::cerr << "Invalid move format. Please enter four digits (0-2) representing macroRow, macroCol, microRow, microCol.\n";
+        return {0, 0, 0, 0}; // Return a default invalid move
+    }
+    return move;
+}
+
+bool checkWin(const microBoard& board, const Player currentPlayer) {
+    // Check rows, columns, and diagonals for a win
+    for (int i = 0; i < 3; ++i) {
+        if ((board[i][0] == currentPlayer && board[i][1] == currentPlayer && board[i][2] == currentPlayer) ||
+            (board[0][i] == currentPlayer && board[1][i] == currentPlayer && board[2][i] == currentPlayer)) {
+            return true;
+        }
+    }
+    if ((board[0][0] == currentPlayer && board[1][1] == currentPlayer && board[2][2] == currentPlayer) ||
+        (board[0][2] == currentPlayer && board[1][1] == currentPlayer && board[2][0] == currentPlayer)) {
+        return true;
+    }
+    return false;
+}
+
+bool isMoveLegal(Moves legalMoves, Move move) {
+    for (const auto& legalMove : legalMoves) {
+        if (legalMove == move) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void updateBoard(Board& board, Move move, Player currentPlayer) {
+    board[move[0]][move[1]][move[2]][move[3]] = currentPlayer;
+}
+
+bool checkDraw(microBoard& wonBoards) {
+    for (int macroRow = 0; macroRow < 3; ++macroRow) {
+        for (int macroCol = 0; macroCol < 3; ++macroCol) {
+            if (wonBoards[macroRow][macroCol] == Player::None) {
+                return false; // Found a micro-board that is not yet won or drawn
+            }
+        }
+    }
+    return true; // All micro-boards are either won or drawn
+}
+
+float rateBoard(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    int wonCount = 0;
+    for (int macroRow = 0; macroRow < 3; ++macroRow) {
+        for (int macroCol = 0; macroCol < 3; ++macroCol) {
+            if (wonBoards[macroRow][macroCol] == Player::X) {
+                wonCount++;
+            }
+        }
+    }
+    int lostCount = 0;
+    for (int macroRow = 0; macroRow < 3; ++macroRow) {
+        for (int macroCol = 0; macroCol < 3; ++macroCol) {
+            if (wonBoards[macroRow][macroCol] == Player::O) {
+                lostCount++;
+            }
+        }
+    }
+    
+    return (float)(wonCount - lostCount); // Simple heuristic: number of won boards minus number of lost boards
+}
+
+valueBoards board_to_valueBoard(microBoard board){
+    valueBoards boardState;
+    for(int i =0; i<3;i++){
+            for(int j =0; j<3;j++){
+                switch (board[i][j])
+                {
+                case Player::X :
+                    boardState.X[i][j] =1;
+                    boardState.O[i][j] =0;
+                    break;
+                case Player::O :
+                    boardState.X[i][j] =0;
+                    boardState.O[i][j] =1;
+                    break;
+                case Player::None :
+                    boardState.X[i][j] =0.5;
+                    boardState.O[i][j] =0.5;
+                    break;
+                case Player::Draw :
+                    boardState.X[i][j] =0;
+                    boardState.O[i][j] =0;
+                    break;
+                
+                default:
+                    break;
+                }
+
+        }
+    }
+}
+
+
+float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove, const microBoard& wonBoards){
+    valueBoards probBoard;
+
+        for(int i =0; i<3;i++){
+            for(int j =0; j<3;j++){
+
+        }
+    }
+
+
+}
+
+
+bool compX(float a, float b)
+{
+    return a > b;
+}
+
+bool compO(float a, float b)
+{
+    return a < b;
+}
+
+
+
+
+
+
+const float softWeight = 0.1;
+const float softDecay = 0.5;
+const float softThreshold =2;
+const float softDecayi = 0.5;
+const int softThresholdi = 5;
+const int accelerated_pruning_size = 20;
+/*
+float rateBoardRecursiveSoft(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
+    // 1. SHORT-CIRCUIT: Check if someone won the entire match
+    if (checkWin(wonBoards, Player::X)) return 1000000.0f;
+    if (checkWin(wonBoards, Player::O)) return -1000000.0f;
+
+    if (depth == 0) {
+        return rateBoard(board, currentPlayer, previousMove, wonBoards);
+    }
+
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return 0.0f; // Draw
+    }
+
+    std::vector<float> scores;
+    
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        
+        int mRow = move[0];
+        int mCol = move[1];
+        bool skip = false;
+        float score = 0.0f; // Fix: Initialize with a baseline default
+
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+                if (checkWin(tempWonBoards, currentPlayer)) {
+                    return (currentPlayer == Player::X) ? 1000000.0f : -1000000.0f;
+                }
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+        
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkDraw(tempBoard[mRow][mCol])) {
+                tempWonBoards[mRow][mCol] = Player::Draw;
+
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        if(!skip) {
+            // Fix: Removed 'float' so it targets the outer variable
+            score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+        }
+
+       
+        scores.push_back(score); // X maximizes
+        
+    }
+
+    if (currentPlayer ==Player::X){
+    sort(scores.begin(),scores.end(),compX);
+    }
+    else{
+    sort(scores.begin(),scores.end(),compO);
+    }
+    
+    float softScore = scores[0];
+    
+    if (currentPlayer ==Player::X){
+        int i =0;
+        for(const auto& score : scores){
+            if(scores[0]-score>softThreshold || i > softThresholdi){
+                break;
+            }
+            softScore+= pow(softDecay,(scores[0]-score))*pow(softDecayi,i)*softWeight;
+            i++;
+        }
+    }
+    else{
+        int i =0;
+        for(const auto& score : scores){
+            if(scores[0]-score>softThreshold || i > softThresholdi){
+                break;
+            }
+            softScore-= pow(softDecay,(score-scores[0]))*pow(softDecayi,i)*softWeight;
+            i++;
+        }
+
+    }
+
+    return softScore;
+}
+*/
+#define accelerate_opens
+
+float rateBoardRecursive(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
+    // 1. SHORT-CIRCUIT: Check if someone won the entire match
+    if (checkWin(wonBoards, Player::X)) return 1000000.0f;
+    if (checkWin(wonBoards, Player::O)) return -1000000.0f;
+
+    if (depth == 0) {
+        return rateBoard(board, currentPlayer, previousMove, wonBoards);
+    }
+
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return 0.0f; // Draw
+    }
+
+    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
+
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        
+        int mRow = move[0];
+        int mCol = move[1];
+        bool skip = false;
+        float score = 0.0f; // Fix: Initialize with a baseline default
+
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+                if (checkWin(tempWonBoards, currentPlayer)) {
+                    return (currentPlayer == Player::X) ? 1000000.0f : -1000000.0f;
+                }
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+        
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkDraw(tempBoard[mRow][mCol])) {
+                tempWonBoards[mRow][mCol] = Player::Draw;
+
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        if(!skip) {
+            // Fix: Removed 'float' so it targets the outer variable
+            //if (depth ==2){
+            //    score = rateBoardRecursiveSoft(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+            //}
+            //else{
+                #ifdef accelerate_opens
+                if (legalMoves.size() > accelerated_pruning_size && depth>1){
+                    score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 2); 
+                }
+                else{
+                    score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                }
+
+                
+                
+                #else
+                score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                #endif
+                
+            //}
+        }
+
+        if (currentPlayer == Player::X) {
+            bestScore = std::max(bestScore, score); // X maximizes
+        } else {
+            bestScore = std::min(bestScore, score); // O minimizes
+        }
+    }
+
+    return bestScore;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return {-1, -1, -1, -1};
+    }
+
+    std::vector<Move> bestMoves = {};
+    // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
+    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
+
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        
+        int mRow = move[0];
+        int mCol = move[1];
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+            }
+        }
+        
+        // The next move in the simulation belongs to the opponent
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        float score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depthlimit1 - 1);
+        
+        if (currentPlayer == Player::X) {
+            // Human emulation (if ever used for X)
+            if (score > bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
+        } else {
+            // AI behavior: Player::O wants the lowest (most negative) score possible
+            if (score < bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
+        }
+    }
+    
+    return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
+}
+
+Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return {-1, -1, -1, -1};
+    }
+
+    std::vector<Move> bestMoves = {};
+    // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
+    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
+
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        
+        int mRow = move[0];
+        int mCol = move[1];
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+            }
+        }
+        
+        // The next move in the simulation belongs to the opponent
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        float score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
+        
+        if (currentPlayer == Player::X) {
+            // Human emulation (if ever used for X)
+            if (score > bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
+        } else {
+            // AI behavior: Player::O wants the lowest (most negative) score possible
+            if (score < bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
+        }
+    }
+    
+    return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
+}
+
+
+
+int playGame() {
+    std::srand(std::time(0));
+    std::cout << "=== Noughts and Crosses Squared ===\n\n";
+    
+    Board board{};
+    microBoard wonBoards{}; // Tracks won mini-grids
+    Player currentPlayer = Player::X;
+    
+    
+    Move lastMove ={1,1,1,1};
+    std::string playerMoveString;
+    Move choice;
+
+    //first move
+    //choice = chooseMove1(board, currentPlayer, {1,1,1,1}, wonBoards);
+    
+    
+
+    
+    
+
+    bool gameRunning = true;
+    while (gameRunning) {
+        //render(board);
+        
+        // 1. Get all valid moves for this turn
+        Moves legalMoves = getMoves(board, lastMove, wonBoards);
+        
+        if (legalMoves.empty()) {
+            std::cout << "The game is a draw! No legal moves remaining.\n";
+            return 0 ;
+        }
+        if (currentPlayer == Player::X) {
+            // AI's turn
+            choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
+            std::cout << "AI chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+        } else {
+
+        choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
+            std::cout << "AI chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+        }
+    
+        
+    // 3. Process the safe move
+        updateBoard(board, choice, currentPlayer);
+        lastMove = choice;
+
+        // 4. Check if this move wins its specific micro-board
+        int mRow = choice[0];
+        int mCol = choice[1];
+        if (wonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(board[mRow][mCol], currentPlayer)) {
+                wonBoards[mRow][mCol] = currentPlayer;
+                std::cout << "\n⭐ Player " << (currentPlayer == Player::X ? "X" : "O") 
+                          << " won micro-board [" << mRow << "][" << mCol << "]!\n\n";
+                
+                // 5. Check if winning that micro-board wins the whole game!
+                if (checkWin(wonBoards, currentPlayer)) {
+                    render(board);
+                    std::cout << "🎉🏆 PLAYER " << (currentPlayer == Player::X ? "X" : "O") 
+                              << " WINS THE GAME! 🏆🎉\n";
+                    gameRunning = false;
+                    return (currentPlayer==Player::X? 1.0f : -1.0f);
+                }
+                if (checkDraw(wonBoards)) {
+                    render(board);
+                    std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
+                    gameRunning = false;
+                    return 0.0f;
+                }
+            }
+        }
+        //check micro-board draw
+        if (wonBoards[mRow][mCol] == Player::None) {
+            if (checkDraw(board[mRow][mCol])) {
+                wonBoards[mRow][mCol] = Player::Draw;
+                std::cout << "\n⚪ Micro-board [" << mRow << "][" << mCol << "] is a draw!\n\n";
+
+                //macro draw
+                if (checkDraw(wonBoards)) {
+                    render(board);
+                    std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
+                    gameRunning = false;
+                    return 0.0f;
+                }
+            }
+        }
+
+
+        // 6. Pass turn
+        currentPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+    }
+
+    // Cleanly hold the terminal window open before exiting
+
+    std::cout << "\nExiting. Press Enter to close..." << std::endl;
+    std::cin.clear();
+    std::cin.get(); 
+    return 0;
+}
+
+const int games_played = 50;
+int main() {
+    
+    float it = std::time(0);
+
+    int Xwins=0;
+    int Owins=0;
+    int draws=0;
+    int outcome;
+    for (int i = 0; i < games_played; ++i) {
+        std::cout << "=== Starting Game " << (i + 1) << " of " << games_played << " ===\n";
+        outcome = playGame();
+        switch (outcome)
+        {
+        case 1:
+            Xwins++;
+            break;
+        case 0:
+            draws++;
+            break;
+        case -1:
+            Owins++;
+            break;
+        
+        default:
+            break;
+        }
+        std::cout << "\n=== Game " << (i + 1) << " Finished ===\n\n";
+    }
+
+    std::cout << std::to_string(std::time(0)-it) << "\n" ;
+
+    std::ofstream MyFile("filename.txt");
+    std::cout << "Xwins:" << std::to_string(Xwins) << "\n";
+    std::cout << "Owins:" << std::to_string(Owins) << "\n";
+    std::cout << "Draws:" << std::to_string(draws) << "\n";
+
+
+    MyFile << "depthlimitX " <<  std::to_string(depthlimit1) << "\n";
+    MyFile << "depthlimitO " <<  std::to_string(depthlimit2) << "\n";
+    MyFile << "Xwins:" << std::to_string(Xwins) << "\n";
+    MyFile << "Owins:" << std::to_string(Owins) << "\n";
+    MyFile << "Draws:" << std::to_string(draws) << "\n";
+
+
+
+    std::cin.clear();
+    std::cin.get(); 
+    MyFile.close();
+    return 0;
+}
