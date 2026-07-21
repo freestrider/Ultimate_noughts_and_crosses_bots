@@ -21,7 +21,6 @@ using Moves = std::vector<Move>;
 using microBoard = std::array<std::array<Player, 3>, 3>;
 using Board = std::array<std::array<microBoard, 3>, 3>;
 using valueBoard = std::array<std::array<float, 3>, 3>;
-using supervalueBoard = std::array<std::array<valueBoard, 3>, 3>;
 
 
 class valueBoards {
@@ -36,7 +35,9 @@ class stateValues {
     float O;
     float draw;
 };
+
 using macroBoardvalue = std::array<std::array<stateValues, 3>, 3>;
+using supervalueBoard = std::array<std::array<valueBoards, 3>, 3>;
 
 const int depthlimit1 = 3; // Depth limit for the recursive evaluation
 const int depthlimit2 = 3; // Depth limit for the recursive evaluation
@@ -69,7 +70,7 @@ void render(const Board& board) {
 Moves getMoves(const Board& board, Move currentMove,const microBoard& wonBoards) {
     Moves moves;
 
-    if (wonBoards[currentMove[2]][currentMove[3]] != Player::None) {
+    if (wonBoards[currentMove[2]][currentMove[3]] != Player::None || currentMove[0]==-1) {
         // If the current micro board is won, allow moves in any non-won micro board
         for (int macroRow = 0; macroRow < 3; ++macroRow) {
             for (int macroCol = 0; macroCol < 3; ++macroCol) {
@@ -211,10 +212,21 @@ valueBoards board_to_valueBoard(microBoard board){
     return boardState;
 }
 
+supervalueBoard macro_board_to_valueBoard(Board board,microBoard wonBoards){
+    supervalueBoard out;
+    for (int i =0;i<3;i++){
+        for (int j=0;j<3;j++){
+            if (wonBoards[i][j]==Player::None)
+            {
+            out[i][j] = board_to_valueBoard(board[i][j]);
+            }
+        }
+    }
+    return out;
+}
 
-stateValues getBoardProb(const Board& board,const valueBoards Board){
 
-
+stateValues getBoardProb(valueBoards Board){
     // Convert the microBoard of won boards into probabilistic value boards
 
     auto prod = [&](float a, float b, float c){ return a * b * c; };
@@ -243,17 +255,225 @@ stateValues getBoardProb(const Board& board,const valueBoards Board){
 
 
     stateValues out;
-    out.X = totalX /totalO;
-    out.O = totalO / totalX;
+    out.X = totalX ;
+    out.O = totalO ;
     out.draw = std::max(0.0f,1-out.X-out.O);
+    float sum = out.X+out.O+out.draw;
+    out.X/=sum;
+    out.O/=sum;
+    out.draw/=sum;
+
     // Return difference (positive favors X, negative favors O)
     return out;
 
 }
 
-float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove, const microBoard& wonBoards){
+
+macroBoardvalue getmacroBoardValues(supervalueBoard board,microBoard wonBoards){
+    macroBoardvalue out;
+    for (int i =0;i<3;i++){
+        for (int j=0;j<3;j++){
+            switch (wonBoards[i][j])
+            {
+            case Player::None :
+                out[i][j] = getBoardProb(board[i][j]);
+                break;
+            case Player::Draw :
+                out[i][j].draw = 1;
+                break;
+            case Player::X :
+            out[i][j].X = 1;
+                break;
+            default: //Player::O
+            out[i][j].O = 1;
+                break;
+            }
+            
+        }
+    }
+    return out;
+}
 
 
+const float won_bonus = 1.0;
+
+macroBoardvalue getmacroBoardValues2(supervalueBoard board,microBoard wonBoards){
+    macroBoardvalue out;
+    for (int i =0;i<3;i++){
+        for (int j=0;j<3;j++){
+            switch (wonBoards[i][j])
+            {
+            case Player::None :
+                out[i][j] = getBoardProb(board[i][j]);
+                break;
+            case Player::Draw :
+                out[i][j].draw = 1;
+                break;
+            case Player::X :
+            out[i][j].X = won_bonus;
+                break;
+            default: //Player::O
+            out[i][j].O = won_bonus;
+                break;
+            }
+            
+        }
+    }
+    return out;
+}
+
+
+stateValues get_macroBoardProb(macroBoardvalue board){
+    stateValues gameState;
+
+    auto prod = [&](float a, float b, float c){ return a * b * c; };
+
+    float totalX = 0.0f;
+    float totalO = 0.0f;
+
+    // Columns
+    for (int j = 0; j < 3; ++j) {
+        totalX += prod(board[0][j].X, board[1][j].X, board[2][j].X);
+        totalO += prod(board[0][j].O, board[1][j].O, board[2][j].O);
+    }
+
+    // Diagonals
+    totalX += prod(board[0][0].X, board[1][1].X, board[2][2].X);
+    totalO += prod(board[0][0].O, board[1][1].O, board[2][2].O);
+
+    totalX += prod(board[0][2].X, board[1][1].X, board[2][0].X);
+    totalO += prod(board[0][2].O, board[1][1].O, board[2][0].O);
+
+    gameState.X = totalX;
+    gameState.O = totalO;
+    gameState.draw = std::max(0.0f, 1.0f - totalX - totalO);
+    float sum = gameState.X+gameState.O+gameState.draw;
+    gameState.X/=sum;
+    gameState.O/=sum;
+    gameState.draw/=sum;
+
+
+    return gameState;
+}
+
+
+float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove,const microBoard& wonBoards){
+
+    supervalueBoard valueBoard = macro_board_to_valueBoard(board,wonBoards);
+    macroBoardvalue boardValue = getmacroBoardValues(valueBoard,wonBoards);
+    stateValues gameState = get_macroBoardProb(boardValue);
+
+
+    return gameState.X+0.5*gameState.draw;
+}
+
+/*
+supervalueBoard update_valueBoards(supervalueBoard valueBoard, supervalueBoard completeness){
+
+}
+*/
+const float NoneValue = 0.5;
+const float openNoneValue = 0.4;
+
+valueBoards board_to_valueBoard2(microBoard board,microBoard wonBoards){
+    valueBoards boardState;
+    for(int i =0; i<3;i++){
+            for(int j =0; j<3;j++){
+                switch (board[i][j])
+                {
+                case Player::X :
+                    boardState.X[i][j] =1;
+                    boardState.O[i][j] =0;
+                    break;
+                case Player::O :
+                    boardState.X[i][j] =0;
+                    boardState.O[i][j] =1;
+                    break;
+                case Player::None:
+                    if (wonBoards[i][j] ==Player::None){
+                        boardState.X[i][j] =NoneValue;
+                        boardState.O[i][j] =NoneValue;
+                    }
+                    else{
+                        boardState.X[i][j] =openNoneValue;
+                        boardState.O[i][j] =openNoneValue;
+                    }
+                    break;
+                case Player::Draw :
+                    boardState.X[i][j] =0;
+                    boardState.O[i][j] =0;
+                    break;
+                
+                default:
+                    break;
+                }
+
+        }
+    }
+    return boardState;
+}
+
+supervalueBoard macro_board_to_valueBoard2(Board board,microBoard wonBoards){
+    supervalueBoard out;
+    for (int i =0;i<3;i++){
+        for (int j=0;j<3;j++){
+            if (wonBoards[i][j]==Player::None)
+            {
+            out[i][j] = board_to_valueBoard2(board[i][j],wonBoards);
+            }
+        }
+    }
+    return out;
+}
+
+#define DoubleRate
+
+const float opposingMult = 1;
+const float selfMult = 1;
+const float drawMult= 1.1;
+
+valueBoards update_valueBoard(valueBoards valueBoard,macroBoardvalue boardValue,microBoard wonBoards,microBoard board){
+    valueBoards out = valueBoard;
+    for(int i =0; i<3;i++){
+        for(int j =0; j<3;j++){
+            if (wonBoards[i][j]==Player::None && board[i][j]==Player::None){
+                out.X[i][j] *= (boardValue[i][j].X*selfMult+boardValue[i][j].O*opposingMult+boardValue[i][j].draw*drawMult);
+                out.O[i][j] *= (boardValue[i][j].O*selfMult+boardValue[i][j].X*opposingMult+boardValue[i][j].draw*drawMult);
+            
+            }
+        }
+    }
+    return out;
+}
+
+supervalueBoard update_supervalueBoard(supervalueBoard valueBoard, macroBoardvalue boardValue,microBoard wonBoards,Board board){
+    supervalueBoard out;
+    for (int i =0;i<3;i++){
+        for (int j=0;j<3;j++){
+            if (wonBoards[i][j]==Player::None)
+            {
+            out[i][j] = update_valueBoard(valueBoard[i][j],boardValue,wonBoards,board[i][j]);
+            }
+        }
+    }
+    return out;
+}
+
+float rateBoardProb2(const Board& board, Player currentsPlayer, Move previousMove,const microBoard& wonBoards){
+
+    supervalueBoard valueBoard = macro_board_to_valueBoard2(board,wonBoards);
+    macroBoardvalue boardValue = getmacroBoardValues(valueBoard,wonBoards);
+    
+    #ifdef DoubleRate
+    valueBoard = update_supervalueBoard(valueBoard,boardValue,wonBoards,board);
+    boardValue = getmacroBoardValues(valueBoard,wonBoards);
+
+    #endif
+
+    
+    stateValues gameState = get_macroBoardProb(boardValue);
+
+    return gameState.X+0.5*gameState.draw;
 }
 
 
@@ -262,7 +482,6 @@ bool compX(float a, float b)
 {
     return a > b;
 }
-
 bool compO(float a, float b)
 {
     return a < b;
@@ -280,7 +499,7 @@ const float softDecayi = 0.5;
 const int softThresholdi = 5;
 const int accelerated_pruning_size = 20;
 /*
-float rateBoardRecursiveSoft(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
+float rateBoardRecursive1Soft(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
     // 1. SHORT-CIRCUIT: Check if someone won the entire match
     if (checkWin(wonBoards, Player::X)) return 1000000.0f;
     if (checkWin(wonBoards, Player::O)) return -1000000.0f;
@@ -334,7 +553,7 @@ float rateBoardRecursiveSoft(const Board& board, Player currentPlayer, Move prev
         Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
         if(!skip) {
             // Fix: Removed 'float' so it targets the outer variable
-            score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+            score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
         }
 
        
@@ -378,13 +597,13 @@ float rateBoardRecursiveSoft(const Board& board, Player currentPlayer, Move prev
 */
 #define accelerate_opens
 
-float rateBoardRecursive(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
+float rateBoardRecursive1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
     // 1. SHORT-CIRCUIT: Check if someone won the entire match
     if (checkWin(wonBoards, Player::X)) return 1000000.0f;
     if (checkWin(wonBoards, Player::O)) return -1000000.0f;
 
     if (depth == 0) {
-        return rateBoard(board, currentPlayer, previousMove, wonBoards);
+        return rateBoardProb(board, currentPlayer, previousMove, wonBoards);
     }
 
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
@@ -433,21 +652,106 @@ float rateBoardRecursive(const Board& board, Player currentPlayer, Move previous
         if(!skip) {
             // Fix: Removed 'float' so it targets the outer variable
             //if (depth ==2){
-            //    score = rateBoardRecursiveSoft(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+            //    score = rateBoardRecursive1Soft(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
             //}
             //else{
                 #ifdef accelerate_opens
                 if (legalMoves.size() > accelerated_pruning_size && depth>1){
-                    score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 2); 
+                    score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depth - 2); 
                 }
                 else{
-                    score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                    score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
                 }
 
                 
                 
                 #else
-                score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                #endif
+                
+            //}
+        }
+
+        if (currentPlayer == Player::X) {
+            bestScore = std::max(bestScore, score); // X maximizes
+        } else {
+            bestScore = std::min(bestScore, score); // O minimizes
+        }
+    }
+
+    return bestScore;
+}
+
+float rateBoardRecursive2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards, int depth) {
+    // 1. SHORT-CIRCUIT: Check if someone won the entire match
+    if (checkWin(wonBoards, Player::X)) return 1000000.0f;
+    if (checkWin(wonBoards, Player::O)) return -1000000.0f;
+
+    if (depth == 0) {
+        return rateBoardProb2(board, currentPlayer, previousMove, wonBoards);
+    }
+
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return 0.0f; // Draw
+    }
+
+    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
+
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        
+        int mRow = move[0];
+        int mCol = move[1];
+        bool skip = false;
+        float score = 0.0f; // Fix: Initialize with a baseline default
+
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+                if (checkWin(tempWonBoards, currentPlayer)) {
+                    return (currentPlayer == Player::X) ? 1000000.0f : -1000000.0f;
+                }
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+        
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkDraw(tempBoard[mRow][mCol])) {
+                tempWonBoards[mRow][mCol] = Player::Draw;
+
+                if (checkDraw(tempWonBoards)) {
+                    score = 0.0f; // Fix: Removed 'float'
+                    skip = true; 
+                }
+            }
+        }
+
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        if(!skip) {
+            // Fix: Removed 'float' so it targets the outer variable
+            //if (depth ==2){
+            //    score = rateBoardRecursive1Soft(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+            //}
+            //else{
+                #ifdef accelerate_opens
+                if (legalMoves.size() > accelerated_pruning_size && depth>1){
+                    score = rateBoardRecursive2(tempBoard, nextPlayer, move, tempWonBoards, depth - 2); 
+                }
+                else{
+                    score = rateBoardRecursive2(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
+                }
+
+                
+                
+                #else
+                score = rateBoardRecursive2(tempBoard, nextPlayer, move, tempWonBoards, depth - 1); 
                 #endif
                 
             //}
@@ -465,56 +769,6 @@ float rateBoardRecursive(const Board& board, Player currentPlayer, Move previous
 
 
 
-
-Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
-    Moves legalMoves = getMoves(board, previousMove, wonBoards);
-    if (legalMoves.empty()) {
-        return {-1, -1, -1, -1};
-    }
-
-    std::vector<Move> bestMoves = {};
-    // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
-    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
-
-    for (const auto& move : legalMoves) {
-        Board tempBoard = board;
-        microBoard tempWonBoards = wonBoards;
-        
-        updateBoard(tempBoard, move, currentPlayer);
-        
-        int mRow = move[0];
-        int mCol = move[1];
-        if (tempWonBoards[mRow][mCol] == Player::None) {
-            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
-                tempWonBoards[mRow][mCol] = currentPlayer;
-            }
-        }
-        
-        // The next move in the simulation belongs to the opponent
-        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
-        float score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depthlimit1 - 1);
-        
-        if (currentPlayer == Player::X) {
-            // Human emulation (if ever used for X)
-            if (score > bestScore) {
-                bestScore = score;
-                bestMoves = {move};
-            } else if (score == bestScore) {
-                bestMoves.push_back(move);
-            }
-        } else {
-            // AI behavior: Player::O wants the lowest (most negative) score possible
-            if (score < bestScore) {
-                bestScore = score;
-                bestMoves = {move};
-            } else if (score == bestScore) {
-                bestMoves.push_back(move);
-            }
-        }
-    }
-    
-    return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
-}
 
 Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
@@ -542,7 +796,7 @@ Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, co
         
         // The next move in the simulation belongs to the opponent
         Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
-        float score = rateBoardRecursive(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
+        float score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depthlimit1 - 1);
         
         if (currentPlayer == Player::X) {
             // Human emulation (if ever used for X)
@@ -566,99 +820,162 @@ Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, co
     return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
 }
 
+Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    Moves legalMoves = getMoves(board, previousMove, wonBoards);
+    if (legalMoves.empty()) {
+        return {-1, -1, -1, -1};
+    }
 
+    std::vector<Move> bestMoves = {};
+    // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
+    float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
 
-int playGame() {
-    std::srand(std::time(0));
-    std::cout << "=== Noughts and Crosses Squared ===\n\n";
-    
-    Board board{};
-    microBoard wonBoards{}; // Tracks won mini-grids
-    Player currentPlayer = Player::X;
-    
-    
-    Move lastMove ={1,1,1,1};
-    std::string playerMoveString;
-    Move choice;
-
-    //first move
-    //choice = chooseMove1(board, currentPlayer, {1,1,1,1}, wonBoards);
-    
-    
-
-    
-    
-
-    bool gameRunning = true;
-    while (gameRunning) {
-        //render(board);
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
         
-        // 1. Get all valid moves for this turn
-        Moves legalMoves = getMoves(board, lastMove, wonBoards);
+        updateBoard(tempBoard, move, currentPlayer);
         
-        if (legalMoves.empty()) {
-            std::cout << "The game is a draw! No legal moves remaining.\n";
-            return 0 ;
+        int mRow = move[0];
+        int mCol = move[1];
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+            }
         }
+        
+        // The next move in the simulation belongs to the opponent
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        float score = rateBoardRecursive2(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
+        
         if (currentPlayer == Player::X) {
-            // AI's turn
-            choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
-            std::cout << "AI chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+            // Human emulation (if ever used for X)
+            if (score > bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
         } else {
-
-        choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
-            std::cout << "AI chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+            // AI behavior: Player::O wants the lowest (most negative) score possible
+            if (score < bestScore) {
+                bestScore = score;
+                bestMoves = {move};
+            } else if (score == bestScore) {
+                bestMoves.push_back(move);
+            }
         }
+    }
     
+    return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
+}
+
+class Games{
+    public:
+    float Xtime =0;
+    float Otime = 0;
+    long Xmoves = 0;
+    long Omoves = 0;
+
+
+    int playGame() {
+        std::srand(std::time(0));
+        std::cout << "=== Noughts and Crosses Squared ===\n\n";
         
-    // 3. Process the safe move
-        updateBoard(board, choice, currentPlayer);
-        lastMove = choice;
+        Board board{};
+        microBoard wonBoards{}; // Tracks won mini-grids
+        Player currentPlayer = Player::X;
+        
+        
+        Move lastMove ={-1,1,1,1};
+        std::string playerMoveString;
+        Move choice;
 
-        // 4. Check if this move wins its specific micro-board
-        int mRow = choice[0];
-        int mCol = choice[1];
-        if (wonBoards[mRow][mCol] == Player::None) {
-            if (checkWin(board[mRow][mCol], currentPlayer)) {
-                wonBoards[mRow][mCol] = currentPlayer;
-                std::cout << "\n⭐ Player " << (currentPlayer == Player::X ? "X" : "O") 
-                          << " won micro-board [" << mRow << "][" << mCol << "]!\n\n";
+        //first move
+        //choice = chooseMove1(board, currentPlayer, {1,1,1,1}, wonBoards);
+        
+        
+
+        
+        
+
+        bool gameRunning = true;
+        while (gameRunning) {
+            //render(board);
+            
+            // 1. Get all valid moves for this turn
+            Moves legalMoves = getMoves(board, lastMove, wonBoards);
+            
+            if (legalMoves.empty()) {
+                std::cout << "The game is a draw! No legal moves remaining.\n";
+                return 0 ;
+            }
+            if (currentPlayer == Player::X) {
+                // AI's turn
+                float it = std::time(0);
+                choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
+                Xtime += std::time(0)-it;
+                Xmoves++;
+                std::cout << "AI1 chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+            
+            } else {
+                float it = std::time(0);
                 
-                // 5. Check if winning that micro-board wins the whole game!
-                if (checkWin(wonBoards, currentPlayer)) {
-                    render(board);
-                    std::cout << "🎉🏆 PLAYER " << (currentPlayer == Player::X ? "X" : "O") 
-                              << " WINS THE GAME! 🏆🎉\n";
-                    gameRunning = false;
-                    return (currentPlayer==Player::X? 1.0f : -1.0f);
-                }
-                if (checkDraw(wonBoards)) {
-                    render(board);
-                    std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
-                    gameRunning = false;
-                    return 0.0f;
+                choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
+                Otime += std::time(0)-it;
+                Omoves++;
+                std::cout << "AI2 chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
+            }
+        
+            
+        // 3. Process the safe move
+            updateBoard(board, choice, currentPlayer);
+            lastMove = choice;
+
+            // 4. Check if this move wins its specific micro-board
+            int mRow = choice[0];
+            int mCol = choice[1];
+            if (wonBoards[mRow][mCol] == Player::None) {
+                if (checkWin(board[mRow][mCol], currentPlayer)) {
+                    wonBoards[mRow][mCol] = currentPlayer;
+                    std::cout << "\n⭐ Player " << (currentPlayer == Player::X ? "X" : "O") 
+                            << " won micro-board [" << mRow << "][" << mCol << "]!\n\n";
+                    
+                    // 5. Check if winning that micro-board wins the whole game!
+                    if (checkWin(wonBoards, currentPlayer)) {
+                        render(board);
+                        std::cout << "🎉🏆 PLAYER " << (currentPlayer == Player::X ? "X" : "O") 
+                                << " WINS THE GAME! 🏆🎉\n";
+                        gameRunning = false;
+                        return (currentPlayer==Player::X? 1.0f : -1.0f);
+                    }
+                    if (checkDraw(wonBoards)) {
+                        render(board);
+                        std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
+                        gameRunning = false;
+                        return 0.0f;
+                    }
                 }
             }
-        }
-        //check micro-board draw
-        if (wonBoards[mRow][mCol] == Player::None) {
-            if (checkDraw(board[mRow][mCol])) {
-                wonBoards[mRow][mCol] = Player::Draw;
-                std::cout << "\n⚪ Micro-board [" << mRow << "][" << mCol << "] is a draw!\n\n";
+            //check micro-board draw
+            if (wonBoards[mRow][mCol] == Player::None) {
+                if (checkDraw(board[mRow][mCol])) {
+                    wonBoards[mRow][mCol] = Player::Draw;
+                    std::cout << "\n⚪ Micro-board [" << mRow << "][" << mCol << "] is a draw!\n\n";
 
-                //macro draw
-                if (checkDraw(wonBoards)) {
-                    render(board);
-                    std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
-                    gameRunning = false;
-                    return 0.0f;
+                    //macro draw
+                    if (checkDraw(wonBoards)) {
+                        render(board);
+                        std::cout << "The game is a draw! All micro-boards are either won or drawn.\n";
+                        gameRunning = false;
+                        return 0.0f;
+                    }
                 }
             }
-        }
 
 
-        // 6. Pass turn
-        currentPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+            // 6. Pass turn
+            currentPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
     }
 
     // Cleanly hold the terminal window open before exiting
@@ -667,7 +984,10 @@ int playGame() {
     std::cin.clear();
     std::cin.get(); 
     return 0;
-}
+    }
+
+};
+
 
 const int games_played = 50;
 int main() {
@@ -678,9 +998,11 @@ int main() {
     int Owins=0;
     int draws=0;
     int outcome;
+    Games tracker;
+
     for (int i = 0; i < games_played; ++i) {
         std::cout << "=== Starting Game " << (i + 1) << " of " << games_played << " ===\n";
-        outcome = playGame();
+        outcome = tracker.playGame();
         switch (outcome)
         {
         case 1:
@@ -702,9 +1024,13 @@ int main() {
     std::cout << std::to_string(std::time(0)-it) << "\n" ;
 
     std::ofstream MyFile("filename.txt");
-    std::cout << "Xwins:" << std::to_string(Xwins) << "\n";
-    std::cout << "Owins:" << std::to_string(Owins) << "\n";
-    std::cout << "Draws:" << std::to_string(draws) << "\n";
+    std::cout << "Xtime: " << std::to_string(tracker.Xtime/tracker.Xmoves)<< "\n";
+    std::cout << "Otime: " << std::to_string(tracker.Otime/tracker.Omoves)<< "\n";
+    
+
+    std::cout << "Xwins: " << std::to_string(Xwins) << "\n";
+    std::cout << "Owins: " << std::to_string(Owins) << "\n";
+    std::cout << "Draws: " << std::to_string(draws) << "\n";
 
 
     MyFile << "depthlimitX " <<  std::to_string(depthlimit1) << "\n";
@@ -712,11 +1038,11 @@ int main() {
     MyFile << "Xwins:" << std::to_string(Xwins) << "\n";
     MyFile << "Owins:" << std::to_string(Owins) << "\n";
     MyFile << "Draws:" << std::to_string(draws) << "\n";
-
+    MyFile.close();
 
 
     std::cin.clear();
     std::cin.get(); 
-    MyFile.close();
+    
     return 0;
 }
