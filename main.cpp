@@ -268,6 +268,50 @@ stateValues getBoardProb(valueBoards Board){
 
 }
 
+const float drawBias = 1.0;
+stateValues getBoardProb2(valueBoards Board){
+    // Convert the microBoard of won boards into probabilistic value boards
+
+    auto prod = [&](float a, float b, float c){ return a * b * c; };
+
+    float totalX = 0.0f;
+    float totalO = 0.0f;
+
+    // Rows
+    for(int i=0;i<3;i++){
+        totalX += prod(Board.X[i][0], Board.X[i][1], Board.X[i][2]);
+        totalO += prod(Board.O[i][0], Board.O[i][1], Board.O[i][2]);
+    }
+
+    // Columns
+    for(int j=0;j<3;j++){
+        totalX += prod(Board.X[0][j], Board.X[1][j], Board.X[2][j]);
+        totalO += prod(Board.O[0][j], Board.O[1][j], Board.O[2][j]);
+    }
+
+    // Diagonals
+    totalX += prod(Board.X[0][0], Board.X[1][1], Board.X[2][2]);
+    totalO += prod(Board.O[0][0], Board.O[1][1], Board.O[2][2]);
+
+    totalX += prod(Board.X[0][2], Board.X[1][1], Board.X[2][0]);
+    totalO += prod(Board.O[0][2], Board.O[1][1], Board.O[2][0]);
+
+
+    stateValues out;
+    out.X = totalX ;
+    out.O = totalO ;
+    out.draw = std::max(0.0f,drawBias-out.X-out.O);
+    float sum = out.X+out.O+out.draw;
+    out.X/=sum;
+    out.O/=sum;
+    out.draw/=sum;
+
+    // Return difference (positive favors X, negative favors O)
+    return out;
+
+}
+
+
 
 macroBoardvalue getmacroBoardValues(supervalueBoard board,microBoard wonBoards){
     macroBoardvalue out;
@@ -295,7 +339,7 @@ macroBoardvalue getmacroBoardValues(supervalueBoard board,microBoard wonBoards){
 }
 
 
-const float won_bonus = 1.0;
+const float won_bonus = 0.0;
 
 macroBoardvalue getmacroBoardValues2(supervalueBoard board,microBoard wonBoards){
     macroBoardvalue out;
@@ -304,16 +348,16 @@ macroBoardvalue getmacroBoardValues2(supervalueBoard board,microBoard wonBoards)
             switch (wonBoards[i][j])
             {
             case Player::None :
-                out[i][j] = getBoardProb(board[i][j]);
+                out[i][j] = getBoardProb2(board[i][j]);
                 break;
             case Player::Draw :
                 out[i][j].draw = 1;
                 break;
             case Player::X :
-            out[i][j].X = won_bonus;
+            out[i][j].X = 1+won_bonus;
                 break;
             default: //Player::O
-            out[i][j].O = won_bonus;
+            out[i][j].O = 1+won_bonus;
                 break;
             }
             
@@ -357,6 +401,42 @@ stateValues get_macroBoardProb(macroBoardvalue board){
 }
 
 
+const float macrodrawBias = 0.9;
+stateValues get_macroBoardProb2(macroBoardvalue board){
+    stateValues gameState;
+
+    auto prod = [&](float a, float b, float c){ return a * b * c; };
+
+    float totalX = 0.0f;
+    float totalO = 0.0f;
+
+    // Columns
+    for (int j = 0; j < 3; ++j) {
+        totalX += prod(board[0][j].X, board[1][j].X, board[2][j].X);
+        totalO += prod(board[0][j].O, board[1][j].O, board[2][j].O);
+    }
+
+    // Diagonals
+    totalX += prod(board[0][0].X, board[1][1].X, board[2][2].X);
+    totalO += prod(board[0][0].O, board[1][1].O, board[2][2].O);
+
+    totalX += prod(board[0][2].X, board[1][1].X, board[2][0].X);
+    totalO += prod(board[0][2].O, board[1][1].O, board[2][0].O);
+
+    gameState.X = totalX;
+    gameState.O = totalO;
+    gameState.draw = std::max(0.0f, macrodrawBias - totalX - totalO);
+    float sum = gameState.X+gameState.O+gameState.draw;
+    gameState.X/=sum;
+    gameState.O/=sum;
+    gameState.draw/=sum;
+
+
+    return gameState;
+}
+
+
+
 float rateBoardProb(const Board& board, Player currentsPlayer, Move previousMove,const microBoard& wonBoards){
 
     supervalueBoard valueBoard = macro_board_to_valueBoard(board,wonBoards);
@@ -373,7 +453,7 @@ supervalueBoard update_valueBoards(supervalueBoard valueBoard, supervalueBoard c
 }
 */
 const float NoneValue = 0.5;
-const float openNoneValue = 0.4;
+const float openNoneValue = 0.5;
 
 valueBoards board_to_valueBoard2(microBoard board,microBoard wonBoards){
     valueBoards boardState;
@@ -426,11 +506,13 @@ supervalueBoard macro_board_to_valueBoard2(Board board,microBoard wonBoards){
     return out;
 }
 
-#define DoubleRate
-
+//#define DoubleRate
+#ifdef DoubleRate
 const float opposingMult = 1;
 const float selfMult = 1;
-const float drawMult= 1.1;
+const float drawMult= 1;
+
+
 
 valueBoards update_valueBoard(valueBoards valueBoard,macroBoardvalue boardValue,microBoard wonBoards,microBoard board){
     valueBoards out = valueBoard;
@@ -446,6 +528,7 @@ valueBoards update_valueBoard(valueBoards valueBoard,macroBoardvalue boardValue,
     return out;
 }
 
+
 supervalueBoard update_supervalueBoard(supervalueBoard valueBoard, macroBoardvalue boardValue,microBoard wonBoards,Board board){
     supervalueBoard out;
     for (int i =0;i<3;i++){
@@ -458,6 +541,8 @@ supervalueBoard update_supervalueBoard(supervalueBoard valueBoard, macroBoardval
     }
     return out;
 }
+#endif
+
 
 float rateBoardProb2(const Board& board, Player currentsPlayer, Move previousMove,const microBoard& wonBoards){
 
@@ -470,8 +555,8 @@ float rateBoardProb2(const Board& board, Player currentsPlayer, Move previousMov
 
     #endif
 
+    stateValues gameState = get_macroBoardProb2(boardValue);
     
-    stateValues gameState = get_macroBoardProb(boardValue);
 
     return gameState.X+0.5*gameState.draw;
 }
@@ -770,7 +855,7 @@ float rateBoardRecursive2(const Board& board, Player currentPlayer, Move previou
 
 
 
-Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
     if (legalMoves.empty()) {
         return {-1, -1, -1, -1};
@@ -820,7 +905,7 @@ Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, co
     return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
 }
 
-Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
     if (legalMoves.empty()) {
         return {-1, -1, -1, -1};
@@ -878,7 +963,7 @@ class Games{
     long Omoves = 0;
 
 
-    int playGame() {
+    int playGame(bool switchPlayer=false) {
         std::srand(std::time(0));
         std::cout << "=== Noughts and Crosses Squared ===\n\n";
         
@@ -913,17 +998,32 @@ class Games{
             if (currentPlayer == Player::X) {
                 // AI's turn
                 float it = std::time(0);
+                if (!switchPlayer){
                 choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
                 Xtime += std::time(0)-it;
                 Xmoves++;
+            }
+                else{
+                    choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
+                    Otime += std::time(0)-it;
+                Omoves++;
+                }
+                
                 std::cout << "AI1 chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
             
             } else {
                 float it = std::time(0);
-                
+                if (!switchPlayer){
                 choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
                 Otime += std::time(0)-it;
                 Omoves++;
+                }
+                else{
+                    choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
+                Xtime += std::time(0)-it;
+                Xmoves++;
+
+                }
                 std::cout << "AI2 chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
             }
         
@@ -1000,9 +1100,9 @@ int main() {
     int outcome;
     Games tracker;
 
-    for (int i = 0; i < games_played; ++i) {
+    for (int i = 0; i < games_played/2; ++i) {
         std::cout << "=== Starting Game " << (i + 1) << " of " << games_played << " ===\n";
-        outcome = tracker.playGame();
+        outcome = tracker.playGame(false);
         switch (outcome)
         {
         case 1:
@@ -1013,6 +1113,26 @@ int main() {
             break;
         case -1:
             Owins++;
+            break;
+        
+        default:
+            break;
+        }
+        std::cout << "\n=== Game " << (i + 1) << " Finished ===\n\n";
+    }
+    for (int i = games_played/2; i < games_played; ++i) {
+        std::cout << "=== Starting Game " << (i + 1) << " of " << games_played << " ===\n";
+        outcome = tracker.playGame(true);
+        switch (outcome)
+        {
+        case 1:
+            Owins++;
+            break;
+        case 0:
+            draws++;
+            break;
+        case -1:
+            Xwins++;
             break;
         
         default:
