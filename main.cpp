@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <chrono>
 
 
 enum class Player { None, X, O, Draw };
@@ -42,6 +43,11 @@ using supervalueBoard = std::array<std::array<valueBoards, 3>, 3>;
 const int depthlimit1 = 3; // Depth limit for the recursive evaluation
 const int depthlimit2 = 3; // Depth limit for the recursive evaluation
 
+class MoveScore{
+    public:
+    float score;
+    Move move;
+};
 
 void render(const Board& board) {
     std::cout << "\n     0 1 2   3 4 5   6 7 8\n";
@@ -225,7 +231,6 @@ supervalueBoard macro_board_to_valueBoard(Board board,microBoard wonBoards){
     return out;
 }
 
-
 stateValues getBoardProb(valueBoards Board){
     // Convert the microBoard of won boards into probabilistic value boards
 
@@ -401,7 +406,7 @@ stateValues get_macroBoardProb(macroBoardvalue board){
 }
 
 
-const float macrodrawBias = 0.9;
+const float macrodrawBias = 0.9; //useful
 stateValues get_macroBoardProb2(macroBoardvalue board){
     stateValues gameState;
 
@@ -453,7 +458,7 @@ supervalueBoard update_valueBoards(supervalueBoard valueBoard, supervalueBoard c
 }
 */
 const float NoneValue = 0.5;
-const float openNoneValue = 0.5;
+const float openNoneValue = 0.4; //useful
 
 valueBoards board_to_valueBoard2(microBoard board,microBoard wonBoards){
     valueBoards boardState;
@@ -543,8 +548,9 @@ supervalueBoard update_supervalueBoard(supervalueBoard valueBoard, macroBoardval
 }
 #endif
 
+const float current_open_bias =0.0;
 
-float rateBoardProb2(const Board& board, Player currentsPlayer, Move previousMove,const microBoard& wonBoards){
+float rateBoardProb2(const Board& board, Player currentPlayer, Move previousMove,const microBoard& wonBoards){
 
     supervalueBoard valueBoard = macro_board_to_valueBoard2(board,wonBoards);
     macroBoardvalue boardValue = getmacroBoardValues(valueBoard,wonBoards);
@@ -557,8 +563,12 @@ float rateBoardProb2(const Board& board, Player currentsPlayer, Move previousMov
 
     stateValues gameState = get_macroBoardProb2(boardValue);
     
-
+    if (wonBoards[previousMove[2]][previousMove[3]]==Player::None){
     return gameState.X+0.5*gameState.draw;
+    }
+    else{
+        return gameState.X+0.5*gameState.draw + (currentPlayer==Player::X ? current_open_bias : -current_open_bias);
+    }
 }
 
 
@@ -573,6 +583,14 @@ bool compO(float a, float b)
 }
 
 
+bool compXMove(MoveScore a, MoveScore b)
+{
+    return a.score > b.score;
+}
+bool compOMove(MoveScore a, MoveScore b)
+{
+    return a.score < b.score;
+}
 
 
 
@@ -852,10 +870,110 @@ float rateBoardRecursive2(const Board& board, Player currentPlayer, Move previou
     return bestScore;
 }
 
+//#define random_chooseValue 40
+#ifdef random_chooseValue
+std::vector<float> softMax(std::vector<MoveScore> moves,float weight){
+    std::vector<float> probs;
+    if (moves.empty()) return probs;
 
+    // find max for numerical stability
+    float maxScore = moves[0].score*weight;
+    for (const auto& m : moves) if (m.score > maxScore) maxScore = m.score;
 
+    std::vector<float> exps;
+    exps.reserve(moves.size());
+    float sum = 0.0f;
+    for (const auto& m : moves) {
+        float e = std::exp(m.score*weight - maxScore);
+        exps.push_back(e);
+        sum += e;
+    }
+
+    if (sum <= 0.0f) {
+        // fallback to uniform
+        float u = 1.0f / moves.size();
+        for (size_t i = 0; i < moves.size(); ++i) probs.push_back(u);
+        return probs;
+    }
+
+    // softmax normalized
+    probs.resize(moves.size());
+    for (size_t i = 0; i < moves.size(); ++i) {
+        probs[i] = exps[i] / sum;
+    }
+
+    return probs;
+}
+std::vector<float> softMin(std::vector<MoveScore> moves){
+    std::vector<float> probs;
+    if (moves.empty()) return probs;
+
+    // find min for numerical stability (we want smaller scores -> larger probability)
+    float minScore = moves[0].score;
+    for (const auto& m : moves) if (m.score < minScore) minScore = m.score;
+
+    std::vector<float> exps;
+    exps.reserve(moves.size());
+    float sum = 0.0f;
+    for (const auto& m : moves) {
+        float e = std::exp(minScore - m.score);
+        exps.push_back(e);
+        sum += e;
+    }
+
+    if (sum <= 0.0f) {
+        // fallback to uniform
+        float u = 1.0f / moves.size();
+        for (size_t i = 0; i < moves.size(); ++i) probs.push_back(u);
+        return probs;
+    }
+
+    probs.resize(moves.size());
+    for (size_t i = 0; i < moves.size(); ++i) {
+        probs[i] = exps[i] / sum;
+    }
+
+    // blend with small uniform random_chooseValue to ensure exploration
+    float r = random_chooseValue;
+    float uniform = 1.0f / moves.size();
+    for (size_t i = 0; i < probs.size(); ++i) {
+        probs[i] = (1.0f - r) * probs[i] + r * uniform;
+    }
+
+    return probs;
+}
+
+// Sample a move according to softmax probabilities (higher scores => higher prob)
+Move sampleSoftMax(const std::vector<MoveScore>& moves,float weight) {
+    if (moves.empty()) return {-1,-1,-1,-1};
+    std::vector<MoveScore> mv = moves;
+    std::vector<float> probs = softMax(mv,weight);
+    float u = static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) + 1.0f);
+    float cum = 0.0f;
+    for (size_t i = 0; i < probs.size(); ++i) {
+        cum += probs[i];
+        if (u < cum) return mv[i].move;
+    }
+    return mv.back().move;
+}
+
+// Sample a move according to softmin probabilities (lower scores => higher prob)
+Move sampleSoftMin(const std::vector<MoveScore>& moves) {
+    if (moves.empty()) return {-1,-1,-1,-1};
+    std::vector<MoveScore> mv = moves;
+    std::vector<float> probs = softMin(mv);
+    float u = static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) + 1.0f);
+    float cum = 0.0f;
+    for (size_t i = 0; i < probs.size(); ++i) {
+        cum += probs[i];
+        if (u < cum) return mv[i].move;
+    }
+    return mv.back().move;
+}
+#endif
 
 Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
     if (legalMoves.empty()) {
         return {-1, -1, -1, -1};
@@ -864,7 +982,7 @@ Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, co
     std::vector<Move> bestMoves = {};
     // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
     float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
-
+    #ifndef random_chooseValue
     for (const auto& move : legalMoves) {
         Board tempBoard = board;
         microBoard tempWonBoards = wonBoards;
@@ -881,7 +999,7 @@ Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, co
         
         // The next move in the simulation belongs to the opponent
         Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
-        float score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depthlimit1 - 1);
+        float score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
         
         if (currentPlayer == Player::X) {
             // Human emulation (if ever used for X)
@@ -903,9 +1021,42 @@ Move chooseMove1(const Board& board, Player currentPlayer, Move previousMove, co
     }
     
     return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
+    #else
+    std::vector<MoveScore> moves;
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        int mRow = move[0];
+        int mCol = move[1];
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+            }
+        }
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        float score = rateBoardRecursive1(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
+        MoveScore a;
+        a.score = score;
+        a.move = move;
+        moves.push_back(a);
+    }
+    if (currentPlayer==Player::X){
+        std::sort(moves.begin(),moves.end(),compXMove);
+        return sampleSoftMax(moves,random_chooseValue);
+    }
+    else{
+        std::sort(moves.begin(),moves.end(),compOMove);
+        return sampleSoftMax(moves,-random_chooseValue);
+    }
+
+    #endif
 }
 
+
 Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, const microBoard& wonBoards) {
+    
     Moves legalMoves = getMoves(board, previousMove, wonBoards);
     if (legalMoves.empty()) {
         return {-1, -1, -1, -1};
@@ -914,7 +1065,7 @@ Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, co
     std::vector<Move> bestMoves = {};
     // AI (Player::O) wants to MINIMIZE the score, so start baseline at positive infinity
     float bestScore = (currentPlayer == Player::X) ? -1000000.0f : 1000000.0f;
-
+    #ifndef random_chooseValue
     for (const auto& move : legalMoves) {
         Board tempBoard = board;
         microBoard tempWonBoards = wonBoards;
@@ -953,18 +1104,48 @@ Move chooseMove2(const Board& board, Player currentPlayer, Move previousMove, co
     }
     
     return bestMoves[bestMoves.size() > 1 ? rand() % bestMoves.size() : 0];
+    #else
+    std::vector<MoveScore> moves;
+    for (const auto& move : legalMoves) {
+        Board tempBoard = board;
+        microBoard tempWonBoards = wonBoards;
+        
+        updateBoard(tempBoard, move, currentPlayer);
+        int mRow = move[0];
+        int mCol = move[1];
+        if (tempWonBoards[mRow][mCol] == Player::None) {
+            if (checkWin(tempBoard[mRow][mCol], currentPlayer)) {
+                tempWonBoards[mRow][mCol] = currentPlayer;
+            }
+        }
+        Player nextPlayer = (currentPlayer == Player::X) ? Player::O : Player::X;
+        float score = rateBoardRecursive2(tempBoard, nextPlayer, move, tempWonBoards, depthlimit2 - 1);
+        MoveScore a;
+        a.score = score;
+        a.move = move;
+        moves.push_back(a);
+    }
+    if (currentPlayer==Player::X){
+        std::sort(moves.begin(),moves.end(),compXMove);
+        return sampleSoftMax(moves,random_chooseValue);
+    }
+    else{
+        std::sort(moves.begin(),moves.end(),compOMove);
+        return sampleSoftMax(moves,-random_chooseValue);
+    }
+
+    #endif
 }
 
 class Games{
     public:
-    float Xtime =0;
-    float Otime = 0;
+    long long Xtime = 0;
+    long long Otime = 0;
     long Xmoves = 0;
     long Omoves = 0;
 
-
     int playGame(bool switchPlayer=false) {
-        std::srand(std::time(0));
+        std::srand(std::time(0)*11);
         std::cout << "=== Noughts and Crosses Squared ===\n\n";
         
         Board board{};
@@ -997,30 +1178,30 @@ class Games{
             }
             if (currentPlayer == Player::X) {
                 // AI's turn
-                float it = std::time(0);
+                auto it = std::chrono::high_resolution_clock::now();
                 if (!switchPlayer){
                 choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
-                Xtime += std::time(0)-it;
+                Xtime += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - it).count();
                 Xmoves++;
             }
                 else{
                     choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
-                    Otime += std::time(0)-it;
+                    Otime += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - it).count();
                 Omoves++;
                 }
                 
                 std::cout << "AI1 chooses move: " << choice[0] << choice[1] << choice[2] << choice[3] << "\n";
             
             } else {
-                float it = std::time(0);
+                auto it = std::chrono::high_resolution_clock::now();
                 if (!switchPlayer){
                 choice = chooseMove2(board, currentPlayer, lastMove, wonBoards);
-                Otime += std::time(0)-it;
+                Otime += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - it).count();
                 Omoves++;
                 }
                 else{
                     choice = chooseMove1(board, currentPlayer, lastMove, wonBoards);
-                Xtime += std::time(0)-it;
+                Xtime += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - it).count();
                 Xmoves++;
 
                 }
@@ -1089,10 +1270,10 @@ class Games{
 };
 
 
-const int games_played = 50;
+const int games_played = 100;
 int main() {
     
-    float it = std::time(0);
+    auto it = std::chrono::high_resolution_clock::now();
 
     int Xwins=0;
     int Owins=0;
@@ -1141,16 +1322,18 @@ int main() {
         std::cout << "\n=== Game " << (i + 1) << " Finished ===\n\n";
     }
 
-    std::cout << std::to_string(std::time(0)-it) << "\n" ;
+    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - it).count();
+    std::cout << duration_ms << " ms\n" ;
 
     std::ofstream MyFile("filename.txt");
-    std::cout << "Xtime: " << std::to_string(tracker.Xtime/tracker.Xmoves)<< "\n";
-    std::cout << "Otime: " << std::to_string(tracker.Otime/tracker.Omoves)<< "\n";
+    std::cout << "Xtime (avg microseconds): " << std::to_string(tracker.Xtime/tracker.Xmoves)<< "\n";
+    std::cout << "Otime (avg microseconds): " << std::to_string(tracker.Otime/tracker.Omoves)<< "\n";
     
 
     std::cout << "Xwins: " << std::to_string(Xwins) << "\n";
     std::cout << "Owins: " << std::to_string(Owins) << "\n";
     std::cout << "Draws: " << std::to_string(draws) << "\n";
+    std::cout << "Xscore: " << std::to_string(((float)(Xwins+draws*0.5))/((float)(Xwins+Owins+draws))) << "\n";
 
 
     MyFile << "depthlimitX " <<  std::to_string(depthlimit1) << "\n";
